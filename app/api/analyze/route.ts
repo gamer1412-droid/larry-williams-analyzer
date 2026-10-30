@@ -40,21 +40,28 @@ const ASSET_CLASSES = [
 ];
 
 // ===== Yahoo Finance Symbol Mapping =====
-const FUTURES_MAP: Record<string, { yahoo: string; name: string }> = {
-  "gold": { yahoo: "GC=F", name: "Gold Futures" },
-  "silver": { yahoo: "SI=F", name: "Silver Futures" },
-  "crude oil": { yahoo: "CL=F", name: "Crude Oil Futures" },
-  "wti": { yahoo: "CL=F", name: "WTI Crude Oil Futures" },
+// cot = รหัสตลาดในรายงาน COT ของ CFTC (publicreporting.cftc.gov) — undefined = ไม่มีรายงาน
+const FUTURES_MAP: Record<string, { yahoo: string; name: string; cot?: string }> = {
+  "gold": { yahoo: "GC=F", name: "Gold Futures", cot: "088691" },
+  "silver": { yahoo: "SI=F", name: "Silver Futures", cot: "084691" },
+  "crude oil": { yahoo: "CL=F", name: "Crude Oil Futures", cot: "067651" },
+  "wti": { yahoo: "CL=F", name: "WTI Crude Oil Futures", cot: "067651" },
   "brent": { yahoo: "BZ=F", name: "Brent Crude Oil Futures" },
-  "natural gas": { yahoo: "NG=F", name: "Natural Gas Futures" },
-  "corn": { yahoo: "ZC=F", name: "Corn Futures" },
-  "wheat": { yahoo: "ZW=F", name: "Wheat Futures" },
-  "soybean": { yahoo: "ZS=F", name: "Soybean Futures" },
-  "copper": { yahoo: "HG=F", name: "Copper Futures" },
-  "platinum": { yahoo: "PL=F", name: "Platinum Futures" },
-  "s&p 500": { yahoo: "ES=F", name: "S&P 500 E-mini Futures" },
-  "nasdaq": { yahoo: "NQ=F", name: "Nasdaq 100 E-mini Futures" },
-  "dow": { yahoo: "YM=F", name: "Dow E-mini Futures" },
+  "natural gas": { yahoo: "NG=F", name: "Natural Gas Futures", cot: "023651" },
+  "corn": { yahoo: "ZC=F", name: "Corn Futures", cot: "002071" },
+  "wheat": { yahoo: "ZW=F", name: "Wheat Futures", cot: "001071" },
+  "soybean": { yahoo: "ZS=F", name: "Soybean Futures", cot: "005071" },
+  "copper": { yahoo: "HG=F", name: "Copper Futures", cot: "085692" },
+  "platinum": { yahoo: "PL=F", name: "Platinum Futures", cot: "075651" },
+  "s&p 500": { yahoo: "ES=F", name: "S&P 500 E-mini Futures", cot: "13874A" },
+  "nasdaq": { yahoo: "NQ=F", name: "Nasdaq 100 E-mini Futures", cot: "209742" },
+  "dow": { yahoo: "YM=F", name: "Dow E-mini Futures", cot: "124603" },
+};
+
+// ฟอเร็กซ์ — ใช้ตำแหน่ง currency futures ของ CME (key = รหัสสกุลเงิน)
+const FOREX_COT_CODES: Record<string, string> = {
+  "EUR": "099741", "JPY": "097741", "GBP": "096742", "CHF": "092741",
+  "CAD": "090741", "AUD": "032741", "NZD": "112741",
 };
 
 function toYahooSymbol(assetClass: string, raw: string): string {
@@ -63,14 +70,11 @@ function toYahooSymbol(assetClass: string, raw: string): string {
   switch (assetClass) {
     case "crypto": {
       const cleaned = s.toUpperCase().replace("/", "");
-      if (cleaned.endsWith(".BK")) {
-        const base = cleaned.replace(".BK", "");
-        return base.replace("BTC", "BTC.BK");
-      }
-      if (cleaned.endsWith("USD") || cleaned.endsWith("USDT")) {
-        return cleaned.replace("USDT", "USD").replace(/USD$/, "") + "-USD";
-      }
-      return cleaned + "-USD";
+      // ETF คริปโตไทย เช่น BTC.BK — ใช้ตามที่พิมพ์
+      if (cleaned.endsWith(".BK")) return cleaned;
+      // ตัด suffix รูปแบบต่างๆ (BTC-USD / BTCUSDT / BTCUSD) แล้วรวมเป็น XXX-USD
+      const base = cleaned.replace(/-?(USDT|USD)$/, "");
+      return base + "-USD";
     }
     case "equity": {
       return s.toUpperCase();
@@ -155,6 +159,13 @@ interface MarketData {
   recentHighs: number[];
   recentLows: number[];
   recentVolumes: number[];
+  // เทรนด์ภาพใหญ่รายสัปดาห์ (จากข้อมูล 1 ปี)
+  weekly: {
+    changePct: number | null;      // สัปดาห์นี้เทียบสัปดาห์ก่อน
+    sma10: number | null;          // เฉลี่ย 10 สัปดาห์
+    aboveSma10: boolean | null;    // ราคาอยู่เหนือ/ต่ำกว่าเฉลี่ย 10 สัปดาห์
+    closes: number[];              // ราคาปิดรายสัปดาห์ล่าสุด (เก่า→ใหม่)
+  };
   fetchedAt: string;
   // Calculated indicators
   sma5: number | null;
@@ -178,8 +189,6 @@ interface FundamentalData {
   dividendYield?: number;
   sector?: string;
   industry?: string;
-  earningsDate?: string;
-  impliedVolatility?: number;
   beta?: number;
   fiftyDayAverage?: number;
   twoHundredDayAverage?: number;
@@ -192,6 +201,75 @@ interface CryptoMarketData {
   totalMarketCap?: number;
 }
 
+// ===== COT Report (CFTC — หัวใจของกรอบ Larry Williams สำหรับฟิวเจอร์ส/ฟอเร็กซ์) =====
+interface CotData {
+  market: string;
+  reportDate: string;
+  noncommLong: number;
+  noncommShort: number;
+  noncommNet: number;      // Net Non-Commercial (นักเก็งกำไร)
+  commNet: number;         // Net Commercial (hedger)
+  openInterest: number;
+  netChangeWeek: number;   // Net เทียบสัปดาห์ก่อน
+  percentile30w: number | null; // Net อยู่ตำแหน่งไหนของกรอบ 30 สัปดาห์ (0-100)
+}
+
+const COT_TTL = 24 * 60 * 60 * 1000; // รายงานออกรายสัปดาห์ — cache วันละครั้งพอ
+const cotCache = new Map<string, CacheEntry<CotData | null>>();
+
+// หารหัสตลาด COT จาก symbol ที่ผู้ใช้พิมพ์ (เฉพาะ macro) — null = ไม่มีรายงานให้ดู
+function cotCodeFor(activeClass: string, rawSymbol: string): string | null {
+  if (activeClass !== "macro") return null;
+  const s = rawSymbol.trim();
+  if (s.includes("/")) {
+    // คู่ฟอเร็กซ์ — ใช้สกุลเงินที่มี futures ให้ดู (ถ้าตัวหน้าเป็น USD ใช้ตัวหลัง)
+    const [base, quote] = s.toUpperCase().split("/");
+    return FOREX_COT_CODES[base] || FOREX_COT_CODES[quote] || null;
+  }
+  return FUTURES_MAP[s.toLowerCase()]?.cot ?? null;
+}
+
+async function fetchCotData(code: string): Promise<CotData | null> {
+  const cached = cotCache.get(code);
+  if (cached && Date.now() < cached.expiry) return cached.data;
+  let data: CotData | null = null;
+  try {
+    const select = "report_date_as_yyyy_mm_dd,market_and_exchange_names,open_interest_all,noncomm_positions_long_all,noncomm_positions_short_all,comm_positions_long_all,comm_positions_short_all";
+    const url = `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$select=${select}&$where=cftc_contract_market_code='${code}'&$order=report_date_as_yyyy_mm_dd DESC&$limit=30`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const rows = (await res.json()) as Record<string, string>[];
+    if (!Array.isArray(rows) || rows.length < 2) return null;
+
+    const num = (v: string | undefined) => (v != null && v !== "" ? Number(v) : 0);
+    const latest = rows[0];
+    const nets = rows.map((r) => num(r.noncomm_positions_long_all) - num(r.noncomm_positions_short_all));
+    const net = nets[0];
+    const min = Math.min(...nets);
+    const max = Math.max(...nets);
+    data = {
+      market: latest.market_and_exchange_names,
+      reportDate: latest.report_date_as_yyyy_mm_dd.slice(0, 10),
+      noncommLong: num(latest.noncomm_positions_long_all),
+      noncommShort: num(latest.noncomm_positions_short_all),
+      noncommNet: net,
+      commNet: num(latest.comm_positions_long_all) - num(latest.comm_positions_short_all),
+      openInterest: num(latest.open_interest_all),
+      netChangeWeek: net - nets[1],
+      percentile30w: max > min ? +(((net - min) / (max - min)) * 100).toFixed(0) : null,
+    };
+  } catch {
+    data = null;
+  }
+  // cache เฉพาะผลสำเร็จ — error ชั่วคราวควรลองใหม่รอบหน้า
+  if (data) cotCache.set(code, { data, expiry: Date.now() + COT_TTL });
+  return data;
+}
+
+
 // ===== Data Quality / Anomaly Detection =====
 // กันเคส Yahoo ส่งเลขเพี้ยน (เช่น BTC +21% วันเดียว) แล้วแอปโชว์ผ่านๆ
 interface DataQuality {
@@ -200,23 +278,36 @@ interface DataQuality {
 }
 
 // เกณฑ์ "ขยับแรงผิดปกติภายในวันเดียว" แยกตามสินทรัพย์
+// key ตรงกับ quality class: equity / crypto / forex / futures (frontend ส่ง equity|crypto|macro)
 const ABNORMAL_MOVE_PCT: Record<string, number> = {
-  stock: 15,
-  options: 15,
+  equity: 15,
   crypto: 20,
   forex: 3,
   futures: 8,
 };
 
-function assessDataQuality(md: MarketData, assetClass: string): DataQuality {
+const QUALITY_LABEL_TH: Record<string, string> = {
+  equity: "หุ้น",
+  crypto: "คริปโต",
+  forex: "ฟอเร็กซ์",
+  futures: "ฟิวเจอร์ส",
+};
+
+// macro ครอบคลุมทั้งฟิวเจอร์ส (=F) และฟอเร็กซ์ (=X) — แยกเกณฑ์ตามสัญลักษณ์ Yahoo
+function qualityClassFor(activeClass: string, yahooSymbol: string): string {
+  if (activeClass === "macro") return yahooSymbol.includes("=X") ? "forex" : "futures";
+  return activeClass;
+}
+
+function assessDataQuality(md: MarketData, qualityClass: string): DataQuality {
   const flags: string[] = [];
 
   // 1. ขยับวันเดียวเกินเกณฑ์ของสินทรัพย์นั้น
   const move = Math.abs(md.changePercent);
-  const limit = ABNORMAL_MOVE_PCT[assetClass] ?? 15;
+  const limit = ABNORMAL_MOVE_PCT[qualityClass] ?? 15;
   if (move >= limit) {
     flags.push(
-      `ราคาขยับ ${md.changePercent}% ภายในวันเดียว (เกินเกณฑ์ปกติ ${limit}% ของ${assetClass}) — ตรวจสอบข่าว/ความถูกต้องของข้อมูลก่อนตัดสินใจ`
+      `ราคาขยับ ${md.changePercent}% ภายในวันเดียว (เกินเกณฑ์ปกติ ${limit}% ของ${QUALITY_LABEL_TH[qualityClass] || qualityClass}) — ตรวจสอบข่าว/ความถูกต้องของข้อมูลก่อนตัดสินใจ`
     );
   }
 
@@ -251,10 +342,36 @@ function assessDataQuality(md: MarketData, assetClass: string): DataQuality {
   return { isAbnormal: flags.length > 0, flags };
 }
 
+// ===== Weekly Trend (รวมราคาปิดรายวันเป็นรายสัปดาห์จากข้อมูล 1 ปี) =====
+function calcWeeklyTrend(aligned: { c: number; t: number }[]): MarketData["weekly"] {
+  const weeklyCloses: number[] = [];
+  let lastWeekIdx = -1;
+  for (const bar of aligned) {
+    // epoch เริ่มวันพฤหัสบดี — เลื่อน 4 วันให้สัปดาห์แบ่งที่วันจันทร์
+    const weekIdx = Math.floor((bar.t + 4 * 86400) / (7 * 86400));
+    if (weekIdx !== lastWeekIdx) {
+      weeklyCloses.push(bar.c);
+      lastWeekIdx = weekIdx;
+    } else {
+      weeklyCloses[weeklyCloses.length - 1] = bar.c; // เก็บปิดของวันท้ายสัปดาห์
+    }
+  }
+  if (weeklyCloses.length < 2) {
+    return { changePct: null, sma10: null, aboveSma10: null, closes: weeklyCloses };
+  }
+  const last = weeklyCloses[weeklyCloses.length - 1];
+  const prev = weeklyCloses[weeklyCloses.length - 2];
+  const changePct = +(((last - prev) / prev) * 100).toFixed(2);
+  const window = weeklyCloses.slice(-10);
+  const sma10 = window.length >= 10 ? +(window.reduce((a, b) => a + b, 0) / 10).toFixed(4) : null;
+  const aboveSma10 = sma10 != null ? last > sma10 : null;
+  return { changePct, sma10, aboveSma10, closes: weeklyCloses.slice(-26) };
+}
+
 // ===== Fetch Real Market Data =====
 async function fetchMarketData(yahooSymbol: string): Promise<MarketData | null> {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=3mo`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=1y`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(url, { 
@@ -280,9 +397,10 @@ async function fetchMarketData(yahooSymbol: string): Promise<MarketData | null> 
     const rawHighs = (quotes?.high || []) as (number | null)[];
     const rawLows = (quotes?.low || []) as (number | null)[];
     const rawVolumes = (quotes?.volume || []) as (number | null)[];
+    const rawTimestamps = (result.timestamp || []) as number[];
 
     // Filter null values but keep aligned
-    const aligned: { c: number; h: number; l: number; v: number }[] = [];
+    const aligned: { c: number; h: number; l: number; v: number; t: number }[] = [];
     for (let i = 0; i < rawCloses.length; i++) {
       if (rawCloses[i] != null && rawHighs[i] != null && rawLows[i] != null) {
         aligned.push({
@@ -290,6 +408,7 @@ async function fetchMarketData(yahooSymbol: string): Promise<MarketData | null> 
           h: rawHighs[i] as number,
           l: rawLows[i] as number,
           v: (rawVolumes[i] ?? 0) as number,
+          t: rawTimestamps[i] ?? 0,
         });
       }
     }
@@ -343,6 +462,7 @@ async function fetchMarketData(yahooSymbol: string): Promise<MarketData | null> 
       recentHighs: highs.slice(-20).map(h => +h.toFixed(4)),
       recentLows: lows.slice(-20).map(l => +l.toFixed(4)),
       recentVolumes: volumes.slice(-20),
+      weekly: calcWeeklyTrend(aligned),
       fetchedAt: new Date().toISOString(),
       sma5, sma10, sma20, rsi14, atr10, pivotPoints, volumeRatio,
       pctFrom52wHigh: high52w > 0 ? +(((currentPrice - high52w) / high52w) * 100).toFixed(2) : 0,
@@ -354,45 +474,69 @@ async function fetchMarketData(yahooSymbol: string): Promise<MarketData | null> 
   }
 }
 
-// ===== Fetch Fundamental Data (Yahoo quoteSummary) =====
+// ===== Fetch Fundamental Data (Yahoo v7 quote — ต้องใช้ cookie + crumb) =====
+// Yahoo ปิด endpoint quoteSummary (v11) แล้ว (404) — endpoint ที่ยังมีชีวิตคือ v7 quote
+// โดยต้องขอ cookie จาก yahoo ก่อน แล้วแลกเป็น crumb (cache ไว้ 1 ชั่วโมง)
+let crumbCache: { crumb: string; cookie: string; expiry: number } | null = null;
+
+async function getYahooCrumb(): Promise<{ crumb: string; cookie: string } | null> {
+  if (crumbCache && Date.now() < crumbCache.expiry) {
+    return { crumb: crumbCache.crumb, cookie: crumbCache.cookie };
+  }
+  try {
+    const cookieRes = await fetch("https://fc.yahoo.com", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      // fc.yahoo.com ตอบ 404 แต่ set-cookie กลับมาให้ปกติ — ไม่ throw เพราะ fetch ไม่ reject 4xx
+    });
+    const cookie = (cookieRes.headers.getSetCookie?.() || [])
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    if (!cookie) return null;
+
+    const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
+      headers: { "User-Agent": "Mozilla/5.0", Cookie: cookie },
+      signal: AbortSignal.timeout(8000),
+    });
+    const crumb = (await crumbRes.text()).trim();
+    // crumb จริงสั้นๆ; ถ้าได้ JSON error กลับมาแปลว่า cookie ไม่ผ่าน
+    if (!crumb || crumb.startsWith("{") || crumb.length > 40) return null;
+
+    crumbCache = { crumb, cookie, expiry: Date.now() + 60 * 60 * 1000 };
+    return { crumb, cookie };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchFundamentalData(yahooSymbol: string): Promise<FundamentalData | null> {
   try {
-    const modules = "summaryDetail,financialData,defaultKeyStatistics,calendarEvents";
-    const url = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=${modules}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, { 
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: controller.signal,
+    const auth = await getYahooCrumb();
+    if (!auth) return null;
+
+    const fields = "trailingPE,forwardPE,marketCap,epsTrailingTwelveMonths,dividendYield,beta,fiftyDayAverage,twoHundredDayAverage,sector,industry";
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSymbol)}&fields=${fields}&crumb=${encodeURIComponent(auth.crumb)}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0", Cookie: auth.cookie },
+      signal: AbortSignal.timeout(8000),
     });
-    clearTimeout(timeoutId);
     if (!res.ok) return null;
 
     const data = await res.json();
-    const result = data?.quoteSummary?.result?.[0];
-    if (!result) return null;
-
-    const sd = result.summaryDetail || {};
-    const fd = result.financialData || {};
-    const ks = result.defaultKeyStatistics || {};
-    const ce = result.calendarEvents || {};
-
-    const earningsArr = ce.earnings?.earningsDate || [];
-    const nextEarnings = earningsArr[0]?.fmt || null;
+    const q = data?.quoteResponse?.result?.[0];
+    if (!q) return null;
 
     return {
-      trailingPE: sd.trailingPE?.raw,
-      forwardPE: sd.forwardPE?.raw,
-      marketCap: sd.marketCap?.raw,
-      eps: ks.trailingEps?.raw,
-      dividendYield: sd.dividendYield?.raw ? +(sd.dividendYield.raw * 100).toFixed(2) : undefined,
-      impliedVolatility: fd.currentPrice ? undefined : undefined, // from options chain if needed
-      beta: sd.beta?.raw,
-      fiftyDayAverage: sd.fiftyDayAverage?.raw,
-      twoHundredDayAverage: sd.twoHundredDayAverage?.raw,
-      earningsDate: nextEarnings,
-      sector: ks.sector,
-      industry: ks.industry,
+      trailingPE: q.trailingPE,
+      forwardPE: q.forwardPE,
+      marketCap: q.marketCap,
+      eps: q.epsTrailingTwelveMonths,
+      // v7 quote ให้ dividendYield เป็นหน่วย % มาแล้ว (ต่างจาก quoteSummary เก่าที่เป็นตัวเศษ)
+      dividendYield: typeof q.dividendYield === "number" ? +q.dividendYield.toFixed(2) : undefined,
+      beta: q.beta,
+      fiftyDayAverage: q.fiftyDayAverage,
+      twoHundredDayAverage: q.twoHundredDayAverage,
+      sector: q.sector,
+      industry: q.industry,
     };
   } catch {
     return null;
@@ -446,7 +590,7 @@ function buildPrompt(
   marketData: MarketData | null,
   fundamental: FundamentalData | null,
   cryptoData: CryptoMarketData | null,
-  dataQuality?: DataQuality
+  cotData: CotData | null
 ) {
   const cls = ASSET_CLASSES.find((c) => c.key === assetClass) || ASSET_CLASSES[0];
 
@@ -461,6 +605,11 @@ function buildPrompt(
 
     const smaSignal = marketData.sma20
       ? marketData.currentPrice > marketData.sma20 ? "ราคาอยู่เหนือ SMA20 (bullish)" : "ราคาอยู่ต่ำกว่า SMA20 (bearish)"
+      : "N/A";
+
+    const wk = marketData.weekly;
+    const weeklySignal = wk.sma10 != null
+      ? `ราคาอยู่${wk.aboveSma10 ? "เหนือ" : "ต่ำกว่า"}เฉลี่ย 10 สัปดาห์ (${wk.aboveSma10 ? "เทรนด์ภาพใหญ่ขาขึ้น" : "เทรนด์ภาพใหญ่ขาลง"})`
       : "N/A";
 
     const volSignal = marketData.volumeRatio
@@ -486,6 +635,11 @@ function buildPrompt(
 • RSI 14: ${marketData.rsi14 ?? "N/A"} → ${rsiInterpret}
 • ATR 10: ${marketData.atr10 ?? "N/A"} ${marketData.currency} (ความผันผวนเฉลี่ยต่อวัน)
 
+--- เทรนด์ภาพใหญ่รายสัปดาห์ (จากข้อมูล 1 ปี) ---
+• สัปดาห์นี้ (ยังไม่ปิด) เทียบสัปดาห์ก่อน: ${wk.changePct != null ? (wk.changePct >= 0 ? "+" : "") + wk.changePct + "%" : "N/A"} → ${weeklySignal}
+• SMA 10 สัปดาห์: ${wk.sma10 ?? "N/A"}
+• ราคาปิดรายสัปดาห์ล่าสุด (เก่า→ใหม่): ${wk.closes.join(", ")}
+
 --- Pivot Points (คำนวณจากเมื่อวาน) ---
 ${pp ? `• R2: ${pp.r2}  R1: ${pp.r1}  PP: ${pp.pp}  S1: ${pp.s1}  S2: ${pp.s2}` : "• ไม่มีข้อมูล"}
 
@@ -504,7 +658,7 @@ ${marketData.dataQuality.flags.map((f) => `• ${f}`).join("\n")}
   }
 
   let fundamentalContext = "";
-  if (fundamental && (assetClass === "stock" || assetClass === "options")) {
+  if (fundamental && assetClass === "equity") {
     const formatMktCap = (v?: number) => {
       if (!v) return "N/A";
       if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T USD`;
@@ -519,9 +673,9 @@ ${marketData.dataQuality.flags.map((f) => `• ${f}`).join("\n")}
 • EPS (Trailing): ${fundamental.eps?.toFixed(2) ?? "N/A"} USD
 • Dividend Yield: ${fundamental.dividendYield ? fundamental.dividendYield + "%" : "N/A"}
 • Beta: ${fundamental.beta?.toFixed(2) ?? "N/A"}
+• Sector / Industry: ${[fundamental.sector, fundamental.industry].filter(Boolean).join(" / ") || "N/A"}
 • 50-Day MA (Yahoo): ${fundamental.fiftyDayAverage?.toFixed(2) ?? "N/A"}
-• 200-Day MA (Yahoo): ${fundamental.twoHundredDayAverage?.toFixed(2) ?? "N/A"}
-${fundamental.earningsDate ? `• Earnings วันถัดไป: ${fundamental.earningsDate}` : "• Earnings: ไม่ระบุในข้อมูล"}`;
+• 200-Day MA (Yahoo): ${fundamental.twoHundredDayAverage?.toFixed(2) ?? "N/A"}`;
   }
 
   let cryptoContext = "";
@@ -540,11 +694,31 @@ ${fundamental.earningsDate ? `• Earnings วันถัดไป: ${fundament
 • Total Market Cap: ${cryptoData.totalMarketCap ? "$" + (cryptoData.totalMarketCap / 1e12).toFixed(2) + "T" : "N/A"}`;
   }
 
+  let cotContext = "";
+  if (assetClass === "macro" && cotData) {
+    const pct = cotData.percentile30w;
+    const pctNote = pct != null
+      ? pct >= 80 ? "extreme ฝั่งเก็งกำไรยาวมาก — momentum แข็งแรงแต่ระวังภาวะซื้อหมด (crowded long)"
+        : pct >= 60 ? "เอียงฝั่งเก็งกำไรยาวมากกว่าปกติ"
+        : pct <= 20 ? "extreme ฝั่งเก็งกำไรสั้นมาก — แรงขายชัดเจนแต่ระวัง short squeeze"
+        : pct <= 40 ? "เอียงฝั่งเก็งกำไรสั้นมากกว่าปกติ"
+        : "ระดับกลาง ไม่ extreme"
+      : "";
+    cotContext = `
+--- COT Report (CFTC) — ${cotData.market} ---
+• รายงานล่าสุด: ${cotData.reportDate} (ข้อมูลจริงรายสัปดาห์ ไม่ใช่ประมาณการ)
+• Non-Commercial (นักเก็งกำไร): Long ${cotData.noncommLong.toLocaleString()} / Short ${cotData.noncommShort.toLocaleString()} → Net ${cotData.noncommNet >= 0 ? "+" : ""}${cotData.noncommNet.toLocaleString()} (${cotData.netChangeWeek >= 0 ? "+" : ""}${cotData.netChangeWeek.toLocaleString()} เทียบสัปดาห์ก่อน)
+• Net positioning อยู่ percentile ${pct ?? "N/A"} ของกรอบ 30 สัปดาห์ → ${pctNote}
+• Commercial (hedger): Net ${cotData.commNet >= 0 ? "+" : ""}${cotData.commNet.toLocaleString()}
+• Open Interest: ${cotData.openInterest.toLocaleString()}`;
+  }
+
   return `คุณคือนักวิเคราะห์การลงทุนมืออาชีพที่เชี่ยวชาญกรอบแนวคิด Larry Williams ในการวิเคราะห์ "${symbol}" (${cls.label})
 
 ${marketContext}
 ${fundamentalContext}
 ${cryptoContext}
+${cotContext}
 
 **กฎสำคัญ:**
 1. ใช้ข้อมูลทั้งหมดด้านบนในการวิเคราะห์ โดยเฉพาะ Technical Indicators และ Pivot Points
@@ -553,7 +727,7 @@ ${marketData
   : `2. หากไม่มีข้อมูล Real-time ให้ระบุภาพรวมและระดับสำคัญตามกรอบแนวคิด Larry Williams อย่างสมเหตุสมผล`}
 3. action_plan ต้องมี Entry/Stop Loss/Take Profit เป็นตัวเลขจริง (คำนวณจาก ATR หรือ Pivot Points)
 4. Stop Loss = ใช้ ATR × 1.5 หรือ S1/S2 แล้วแต่ว่าอันไหนสมเหตุสมผลกว่า
-5. ถ้าเกณฑ์ใดไม่มีข้อมูลเพียงพอ (เช่น COT / Funding Rate / Seasonality / Institutional Flow ไม่มีข้อมูลจริงจาก Yahoo Finance) ให้ตอบใน detail ว่า "ไม่มีข้อมูลเพียงพอ — ไม่สามารถประเมินได้จากข้อมูลที่มี" แทนการเดา และลด confidence ลงตามสัดส่วนเกณฑ์ที่ขาด
+5. ถ้าเกณฑ์ใดไม่มีข้อมูลเพียงพอ (เช่น Funding Rate / Seasonality / Institutional Flow ไม่มีข้อมูลจริงจากแหล่งข้อมูลด้านบน) ให้ตอบใน detail ว่า "ไม่มีข้อมูลเพียงพอ — ไม่สามารถประเมินได้จากข้อมูลที่มี" แทนการเดา และลด confidence ลงตามสัดส่วนเกณฑ์ที่ขาด — สำหรับ macro ที่มี COT Report ให้ใช้ตัวเลขจริงในการประเมินเกณฑ์ COT เสมอ
 6. ถ้ามีธงเตือนคุณภาพข้อมูล (Data Quality Warning) ต้อง mention ใน summary และ risk_note พร้อมลด confidence โดยต้องเขียนคำว่า "ข้อมูลผิดปกติ" และ "ตรวจสอบข้อมูล" ไว้ใน summary ด้วย
 7. ตอบเป็นภาษาไทยเท่านั้น ห้ามมีตัวอักษรจีน/ญี่ปุ่น/เกาหลี
 
@@ -631,11 +805,11 @@ interface AIProvider {
   extractContent: (data: Record<string, unknown>) => string;
 }
 
+// ตรวจสอบกับ GET /openai/v1/models ของ Groq (ต.ค. 2026) — llama-3.3-70b ถูกถอนแล้ว
 const GROQ_MODELS = [
   "openai/gpt-oss-120b",
-  "qwen/qwen3.6-27b",
+  "qwen/qwen3.8-27b",
   "openai/gpt-oss-20b",
-  "llama-3.3-70b-versatile",
 ];
 
 const AI_PROVIDERS: AIProvider[] = [
@@ -706,17 +880,27 @@ const AI_PROVIDERS: AIProvider[] = [
 
 const SYSTEM_PROMPT = 'คุณเป็นนักวิเคราะห์การลงทุนมืออาชีพที่ใช้กรอบแนวคิด Larry Williams ร่วมกับ Technical Analysis คุณต้องอ้างอิงตัวเลขจริงจาก SMA, RSI, ATR, Pivot Points ที่ให้มาเสมอ วิเคราะห์อย่างตรงไปตรงมา ตอบเป็นภาษาไทยเท่านั้น ห้ามมีตัวอักษรจีน ญี่ปุ่น เกาหลี';
 
+const AI_TOTAL_BUDGET_MS = 45_000; // งบเวลารวมของทุก provider (route มี maxDuration 60s)
+const AI_PROVIDER_TIMEOUT_MS = 30_000;
+
 async function callAI(promptText: string): Promise<{ content: string; provider: string }> {
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: promptText },
   ];
-
+  const deadline = Date.now() + AI_TOTAL_BUDGET_MS;
   const errors: string[] = [];
 
   for (const provider of AI_PROVIDERS) {
     const apiKey = process.env[provider.envKey];
     if (!apiKey) continue;
+
+    const remaining = deadline - Date.now();
+    if (remaining < 8_000) {
+      errors.push(`${provider.name}: ข้าม (เวลาไม่พอภายในงบ ${AI_TOTAL_BUDGET_MS / 1000}s)`);
+      continue;
+    }
+    const timeoutMs = Math.min(AI_PROVIDER_TIMEOUT_MS, remaining);
 
     try {
       const url = provider.name === "Gemini"
@@ -724,7 +908,7 @@ async function callAI(promptText: string): Promise<{ content: string; provider: 
         : provider.url;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await fetch(url, {
         method: "POST",
@@ -745,8 +929,8 @@ async function callAI(promptText: string): Promise<{ content: string; provider: 
       return { content, provider: provider.name };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("AbortError") || msg.includes("timeout")) {
-        errors.push(`${provider.name}: timeout (45s)`);
+      if (err instanceof Error && err.name === "AbortError") {
+        errors.push(`${provider.name}: timeout (${Math.round(timeoutMs / 1000)}s)`);
       } else {
         errors.push(`${provider.name}: ${msg}`);
       }
@@ -761,27 +945,74 @@ async function callAI(promptText: string): Promise<{ content: string; provider: 
   throw new Error(`AI providers ทั้งหมดล้มเหลว:\n${errors.join("\n")}`);
 }
 
+// ===== Simple In-Memory Rate Limit (10 ครั้ง/นาที ต่อ IP — กันยิง API จนหมดโควตา AI) =====
+const RATE_LIMIT = 10;
+const RATE_WINDOW_MS = 60_000;
+const rateBuckets = new Map<string, number[]>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const hits = (rateBuckets.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (hits.length >= RATE_LIMIT) {
+    rateBuckets.set(ip, hits);
+    return false;
+  }
+  hits.push(now);
+  rateBuckets.set(ip, hits);
+  // ล้าง bucket ที่หมดอายุ กันหน่วยความจำโต
+  if (rateBuckets.size > 1000) {
+    for (const [k, v] of rateBuckets) {
+      if (v.every((t) => now - t >= RATE_WINDOW_MS)) rateBuckets.delete(k);
+    }
+  }
+  return true;
+}
+
+const VALID_ASSET_CLASSES = new Set(["equity", "crypto", "macro"]);
+
 // ===== API Route Handler =====
+// ใช้เวลารวม (ดึงข้อมูล + เรียก AI) นาน จำกัดไว้ให้ Vercel ไม่ตัดกลางทาง
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   try {
-    const { symbol, activeClass } = await request.json();
-    if (!symbol || !activeClass) {
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+    if (!checkRateLimit(ip)) {
+      return NextResponse.json(
+        { error: "คุณเรียก API ถี่เกินไป (จำกัด 10 ครั้ง/นาที) — รอสักครู่แล้วลองใหม่" },
+        { status: 429 }
+      );
+    }
+
+    const body = await request.json().catch(() => null);
+    const rawSymbol = typeof body?.symbol === "string" ? body.symbol.trim() : "";
+    const activeClass = typeof body?.activeClass === "string" ? body.activeClass.trim() : "";
+    if (!rawSymbol || !activeClass) {
       return NextResponse.json({ error: 'กรุณาระบุสัญลักษณ์และประเภทสินทรัพย์' }, { status: 400 });
     }
+    if (!VALID_ASSET_CLASSES.has(activeClass)) {
+      return NextResponse.json({ error: `ประเภทสินทรัพย์ไม่ถูกต้อง — ต้องเป็น equity, crypto หรือ macro` }, { status: 400 });
+    }
+    // กัน input แปลกๆ เข้าไปใน URL และ prompt (สัญลักษณ์จริงมีแค่ตัวอักษร/ตัวเลข/จุด/ขีด/ = / : & เว้นวรรค)
+    if (rawSymbol.length > 20 || !/^[A-Za-z0-9&\s./=\-:]+$/.test(rawSymbol)) {
+      return NextResponse.json({ error: "รูปแบบสัญลักษณ์ไม่ถูกต้อง" }, { status: 400 });
+    }
+    const symbol = rawSymbol;
 
     // Step 1: Fetch market data (parallel, with cache)
     const yahooSymbol = toYahooSymbol(activeClass, symbol);
+    const cotCode = cotCodeFor(activeClass, symbol);
 
-    const [marketData, fundamental, cryptoData] = await Promise.all([
+    const [marketData, fundamental, cryptoData, cotData] = await Promise.all([
       fetchMarketDataCached(yahooSymbol),
-      (activeClass === "stock" || activeClass === "options") ? fetchFundamentalDataCached(yahooSymbol) : Promise.resolve(null),
+      (activeClass === "equity") ? fetchFundamentalDataCached(yahooSymbol) : Promise.resolve(null),
       activeClass === "crypto" ? fetchCryptoMarketData() : Promise.resolve(null),
+      cotCode ? fetchCotData(cotCode) : Promise.resolve(null),
     ]);
 
     if (marketData) {
-      console.log(`Market data: ${marketData.symbol} @ ${marketData.currentPrice} | SMA20: ${marketData.sma20} | RSI14: ${marketData.rsi14}`);
       // ตรวจคุณภาพข้อมูลก่อนส่งต่อ (ข้อ 1: ธงเตือนเลขเพี้ยน)
-      marketData.dataQuality = assessDataQuality(marketData, activeClass);
+      marketData.dataQuality = assessDataQuality(marketData, qualityClassFor(activeClass, yahooSymbol));
       if (marketData.dataQuality.isAbnormal) {
         console.warn(`Data quality flags for ${yahooSymbol}:`, marketData.dataQuality.flags);
       }
@@ -790,7 +1021,7 @@ export async function POST(request: Request) {
     }
 
     // Step 2: Build prompt
-    const promptText = buildPrompt(activeClass, symbol, marketData, fundamental, cryptoData);
+    const promptText = buildPrompt(activeClass, symbol, marketData, fundamental, cryptoData, cotData);
 
     // Step 3: Call AI (with multi-provider fallback)
     const { content: rawContent, provider: aiProvider } = await callAI(promptText);
@@ -821,6 +1052,9 @@ export async function POST(request: Request) {
           volume_ratio: marketData.volumeRatio,
           pct_from_52w_high: marketData.pctFrom52wHigh,
           pct_from_52w_low: marketData.pctFrom52wLow,
+          weekly_change_pct: marketData.weekly.changePct,
+          weekly_sma10: marketData.weekly.sma10,
+          weekly_above_sma10: marketData.weekly.aboveSma10,
           data_quality: marketData.dataQuality || { isAbnormal: false, flags: [] },
         };
         parsedData.data_source = `Yahoo Finance (real-time) + ${aiProvider}`;
@@ -831,19 +1065,24 @@ export async function POST(request: Request) {
       // Attach fundamental & crypto data
       if (fundamental) parsedData.fundamental = fundamental;
       if (cryptoData) parsedData.crypto_market = cryptoData;
+      if (cotData) parsedData.cot = cotData;
 
       // ===== ข้อ 4: ตรวจคำตอบตัวเอง (Self-check AI output) =====
       const selfCheckFlags: string[] = [];
       const aiSummary: string = parsedData.summary || "";
       const aiCriteria: Array<{label?: string; detail?: string; signal?: string}> = parsedData.criteria || [];
 
-      // เช็ก 1: AI อ้าง SMA20 ไม่ตรงข้อมูลจริง
+      // เช็ก 1: AI อ้าง SMA20 ไม่ตรงข้อมูลจริง (เทียบแบบสัดส่วน 10% — ใช้ได้ทั้งสินทรัพย์ราคาต่ำ/สูง)
+      // ข้ามเลขที่ตามด้วย % (เป็นการพูดถึงระยะห่าง ไม่ใช่ราคา)
       const snapshot = parsedData.market_snapshot || null;
       if (snapshot && (snapshot as { sma20?: number }).sma20 && aiSummary) {
         const snapSma = (snapshot as { sma20?: number }).sma20!;
-        const smaInText = /SMA20.*?(\d+[,.]\d*)/i.exec(aiSummary);
-        if (smaInText && Math.abs(parseFloat(smaInText[1].replace(",","")) - snapSma) > 500) {
-          selfCheckFlags.push(`AI อ้าง SMA20 ไม่ตรงข้อมูลจริง (Yahoo: ${snapSma}, AI claim: ~${smaInText[1]})`);
+        const smaInText = /SMA\s*20[^.。]{0,40}?(\d[\d,]*\.?\d+)(?!\s*%)/i.exec(aiSummary);
+        if (smaInText) {
+          const claimed = parseFloat(smaInText[1].replace(/,/g, ""));
+          if (Number.isFinite(claimed) && snapSma > 0 && Math.abs(claimed - snapSma) / snapSma > 0.1) {
+            selfCheckFlags.push(`AI อ้าง SMA20 ไม่ตรงข้อมูลจริง (Yahoo: ${snapSma}, AI claim: ~${smaInText[1]})`);
+          }
         }
       }
       // เช็ก 2: เกณฑ์ไม่มีข้อมูลพอแต่ AI ตอบ bullish/bearish

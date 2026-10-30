@@ -1,32 +1,36 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback, ErrorInfo } from "react";
-import { TrendingUp, Layers, LineChart, Bitcoin, Globe2, Search, Loader2, AlertTriangle, ExternalLink, TrendingDown, Clock, Database, Copy, Check, History, Trash2, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
+import { TrendingUp, Bitcoin, Globe2, Search, Loader2, AlertTriangle, ExternalLink, TrendingDown, Clock, Database, Copy, Check, History, Trash2, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
 
 // ===== TradingView Symbol Mapping =====
+const TV_FUTURES_MAP: Record<string, string> = {
+  "GOLD": "COMEX:GC1!", "SILVER": "COMEX:SI1!", "CRUDE OIL": "NYMEX:CL1!",
+  "WTI": "NYMEX:CL1!", "BRENT": "NYMEX:BZ1!",
+  "NATURAL GAS": "NYMEX:NG1!", "CORN": "CBOT:ZC1!", "WHEAT": "CBOT:ZW1!",
+  "SOYBEAN": "CBOT:ZS1!", "COPPER": "COMEX:HG1!", "PLATINUM": "NYMEX:PL1!",
+  "S&P 500": "CME_MINI:ES1!", "NASDAQ": "CME_MINI:NQ1!", "DOW": "CBOT:YM1!",
+  "CL=F": "NYMEX:CL1!", "GC=F": "COMEX:GC1!", "SI=F": "COMEX:SI1!",
+  "NG=F": "NYMEX:NG1!", "ZC=F": "CBOT:ZC1!", "ZW=F": "CBOT:ZW1!",
+  "ES=F": "CME_MINI:ES1!", "NQ=F": "CME_MINI:NQ1!", "YM=F": "CBOT:YM1!",
+  "HG=F": "COMEX:HG1!", "PL=F": "NYMEX:PL1!", "ZS=F": "CBOT:ZS1!",
+};
+
+// assetClass ตรงกับ ASSET_CLASSES (equity / crypto / macro) — key ที่ frontend ส่งให้ API ก็คือค่าเดียวกัน
 function toTradingViewSymbol(assetClass: string, raw: string) {
   const s = (raw || "").trim().toUpperCase();
   if (!s) return "";
   if (s.includes(":")) return s;
   const noSlash = s.replace("/", "");
   switch (assetClass) {
-    case "crypto":
-      return `BINANCE:${noSlash}${noSlash.endsWith("USDT") || noSlash.endsWith("USD") ? "" : "USDT"}`;
-    case "forex":
-      return `FX:${noSlash}`;
-    case "futures": {
-      const futuresMap: Record<string, string> = {
-        "GOLD": "COMEX:GC1!", "SILVER": "COMEX:SI1!", "CRUDE OIL": "NYMEX:CL1!",
-        "WTI": "NYMEX:CL1!", "BRENT": "NYMEX:BZ1!",
-        "NATURAL GAS": "NYMEX:NG1!", "CORN": "CBOT:ZC1!", "WHEAT": "CBOT:ZW1!",
-        "SOYBEAN": "CBOT:ZS1!", "COPPER": "COMEX:HG1!", "PLATINUM": "NYMEX:PL1!",
-        "S&P 500": "CME_MINI:ES1!", "NASDAQ": "CME_MINI:NQ1!", "DOW": "CBOT:YM1!",
-        "CL=F": "NYMEX:CL1!", "GC=F": "COMEX:GC1!", "SI=F": "COMEX:SI1!",
-        "NG=F": "NYMEX:NG1!", "ZC=F": "CBOT:ZC1!", "ZW=F": "CBOT:ZW1!",
-        "ES=F": "CME_MINI:ES1!", "NQ=F": "CME_MINI:NQ1!", "YM=F": "CBOT:YM1!",
-        "HG=F": "COMEX:HG1!", "PL=F": "NYMEX:PL1!", "ZS=F": "CBOT:ZS1!",
-      };
-      return futuresMap[s] || s;
+    case "crypto": {
+      if (s.endsWith(".BK")) return `SET:${s}`;
+      const base = s.replace(/-?(USDT|USD)$/, "");
+      return `BINANCE:${base}USDT`;
+    }
+    case "macro": {
+      if (s.includes("/")) return `FX:${noSlash}`;
+      return TV_FUTURES_MAP[s] || s;
     }
     default:
       return s;
@@ -34,110 +38,124 @@ function toTradingViewSymbol(assetClass: string, raw: string) {
 }
 
 // ===== Symbol Suggestion Database =====
+// key ตรงกับ ASSET_CLASSES: equity (หุ้น+ออปชั่น), crypto, macro (ฟิวเจอร์ส+ฟอเร็กซ์)
+const EQUITY_SYMBOLS: { symbol: string; name: string }[] = [
+  { symbol: "AAPL", name: "Apple Inc." },
+  { symbol: "MSFT", name: "Microsoft Corporation" },
+  { symbol: "NVDA", name: "NVIDIA Corporation" },
+  { symbol: "TSLA", name: "Tesla Inc." },
+  { symbol: "AMZN", name: "Amazon.com Inc." },
+  { symbol: "GOOGL", name: "Alphabet Inc." },
+  { symbol: "META", name: "Meta Platforms Inc." },
+  { symbol: "SPY", name: "S&P 500 ETF (SPDR)" },
+  { symbol: "QQQ", name: "Nasdaq 100 ETF (Invesco)" },
+  { symbol: "AMD", name: "Advanced Micro Devices Inc." },
+  { symbol: "INTC", name: "Intel Corporation" },
+  { symbol: "JPM", name: "JPMorgan Chase & Co." },
+  { symbol: "BAC", name: "Bank of America Corporation" },
+  { symbol: "DIS", name: "The Walt Disney Company" },
+  { symbol: "NFLX", name: "Netflix Inc." },
+  { symbol: "PLTR", name: "Palantir Technologies Inc." },
+  { symbol: "ARM", name: "Arm Holdings plc" },
+  { symbol: "SOFI", name: "SoFi Technologies Inc." },
+  { symbol: "MSTR", name: "MicroStrategy Inc." },
+  { symbol: "COIN", name: "Coinbase Global Inc." },
+  { symbol: "HOOD", name: "Robinhood Markets Inc." },
+  { symbol: "F", name: "Ford Motor Company" },
+  { symbol: "GM", name: "General Motors Company" },
+  { symbol: "XOM", name: "Exxon Mobil Corporation" },
+  { symbol: "CVX", name: "Chevron Corporation" },
+  { symbol: "WMT", name: "Walmart Inc." },
+  { symbol: "COST", name: "Costco Wholesale Corporation" },
+  { symbol: "V", name: "Visa Inc." },
+  { symbol: "MA", name: "Mastercard Inc." },
+  { symbol: "PFE", name: "Pfizer Inc." },
+];
+
+// ตัวที่นิยมเทรดออปชั่น — ชื่อมีโน้ตกลยุทธ์, ซ้ำกับรายการบนตัวรายชื่อออปชั่น
+const OPTIONS_NOTES: { symbol: string; name: string }[] = [
+  { symbol: "SPY", name: "S&P 500 ETF — สภาพคล่องสูงที่สุด" },
+  { symbol: "QQQ", name: "Nasdaq 100 ETF — Covered Call / CSP นิยม" },
+  { symbol: "AAPL", name: "Apple Inc. — นิยมทำ Wheel Strategy" },
+  { symbol: "NVDA", name: "NVIDIA — IV สูง เหมาะ Sell Premium" },
+  { symbol: "TSLA", name: "Tesla — IV สูง ระวัง Gamma Risk" },
+  { symbol: "AMZN", name: "Amazon — CSP / Bull Put Spread" },
+  { symbol: "META", name: "Meta Platforms — Covered Call นิยม" },
+  { symbol: "MSFT", name: "Microsoft — Wheel Strategy เสถียร" },
+  { symbol: "AMD", name: "Advanced Micro Devices — IV Rank มักสูง" },
+  { symbol: "PLTR", name: "Palantir — CSP / Wheel สาย Tech" },
+  { symbol: "SOFI", name: "SoFi Technologies — ราคาต่ำ เหมาะ CSP" },
+  { symbol: "HOOD", name: "Robinhood Markets — Covered Call" },
+  { symbol: "XLE", name: "Energy Select Sector ETF — Covered Call" },
+  { symbol: "GLD", name: "SPDR Gold Shares — Options บน Gold" },
+  { symbol: "COIN", name: "Coinbase Global — IV สูงมาก" },
+  { symbol: "JEPI", name: "JPMorgan Equity Premium Income ETF" },
+  { symbol: "JEPQ", name: "JPMorgan Nasdaq Equity Premium Income ETF" },
+  { symbol: "UNH", name: "UnitedHealth Group Inc." },
+  { symbol: "VZ", name: "Verizon Communications Inc." },
+  { symbol: "T", name: "AT&T Inc." },
+];
+
+const FUTURES_SYMBOLS: { symbol: string; name: string }[] = [
+  { symbol: "Gold", name: "Gold Futures (GC=F) — ทองคำ" },
+  { symbol: "Silver", name: "Silver Futures (SI=F) — เงิน" },
+  { symbol: "Crude Oil", name: "WTI Crude Oil Futures (CL=F) — น้ำมันดิบ" },
+  { symbol: "Natural Gas", name: "Natural Gas Futures (NG=F) — ก๊าซธรรมชาติ" },
+  { symbol: "Corn", name: "Corn Futures (ZC=F) — ข้าวโพด" },
+  { symbol: "Wheat", name: "Wheat Futures (ZW=F) — ข้าวสาลี" },
+  { symbol: "Soybean", name: "Soybean Futures (ZS=F) — ถั่วเหลือง" },
+  { symbol: "Copper", name: "Copper Futures (HG=F) — ทองแดง" },
+  { symbol: "Platinum", name: "Platinum Futures (PL=F) — แพลตตินัม" },
+  { symbol: "S&P 500", name: "S&P 500 E-mini Futures (ES=F)" },
+  { symbol: "Nasdaq", name: "Nasdaq 100 E-mini Futures (NQ=F)" },
+];
+
+const FOREX_SYMBOLS: { symbol: string; name: string }[] = [
+  { symbol: "EUR/USD", name: "Euro / US Dollar — คู่หลักที่นิยมสุด" },
+  { symbol: "USD/JPY", name: "US Dollar / Japanese Yen" },
+  { symbol: "GBP/USD", name: "British Pound / US Dollar" },
+  { symbol: "AUD/USD", name: "Australian Dollar / US Dollar" },
+  { symbol: "USD/CAD", name: "US Dollar / Canadian Dollar" },
+  { symbol: "USD/CHF", name: "US Dollar / Swiss Franc" },
+  { symbol: "NZD/USD", name: "New Zealand Dollar / US Dollar" },
+  { symbol: "EUR/JPY", name: "Euro / Japanese Yen" },
+  { symbol: "GBP/JPY", name: "British Pound / Japanese Yen" },
+  { symbol: "EUR/GBP", name: "Euro / British Pound" },
+  { symbol: "USD/SGD", name: "US Dollar / Singapore Dollar" },
+  { symbol: "USD/THB", name: "US Dollar / Thai Baht" },
+];
+
+const CRYPTO_SYMBOLS: { symbol: string; name: string }[] = [
+  { symbol: "BTC", name: "Bitcoin (BTC-USD / Binance:BTCUSDT)" },
+  { symbol: "ETH", name: "Ethereum (ETH-USD / Binance:ETHUSDT)" },
+  { symbol: "BTC.BK", name: "Bitcoin ETF (ไทย — BTC.BK)" },
+  { symbol: "BNB", name: "BNB (Binance Coin)" },
+  { symbol: "SOL", name: "Solana" },
+  { symbol: "XRP", name: "XRP (Ripple)" },
+  { symbol: "ADA", name: "Cardano" },
+  { symbol: "AVAX", name: "Avalanche" },
+  { symbol: "DOGE", name: "Dogecoin" },
+  { symbol: "MATIC", name: "Polygon (POL)" },
+  { symbol: "LINK", name: "Chainlink" },
+  { symbol: "DOT", name: "Polkadot" },
+  { symbol: "ATOM", name: "Cosmos" },
+  { symbol: "SUI", name: "Sui Network" },
+  { symbol: "ARB", name: "Arbitrum" },
+  { symbol: "OP", name: "Optimism" },
+  { symbol: "PEPE", name: "Pepe (Meme Coin)" },
+  { symbol: "WIF", name: "dogwifhat (Meme Coin)" },
+];
+
+function buildEquityDB() {
+  const db = new Map(EQUITY_SYMBOLS.map((s) => [s.symbol, { ...s }]));
+  for (const o of OPTIONS_NOTES) db.set(o.symbol, { ...o });
+  return [...db.values()];
+}
+
 const SYMBOL_DB: Record<string, { symbol: string; name: string }[]> = {
-  stock: [
-    { symbol: "AAPL", name: "Apple Inc." },
-    { symbol: "MSFT", name: "Microsoft Corporation" },
-    { symbol: "NVDA", name: "NVIDIA Corporation" },
-    { symbol: "TSLA", name: "Tesla Inc." },
-    { symbol: "AMZN", name: "Amazon.com Inc." },
-    { symbol: "GOOGL", name: "Alphabet Inc." },
-    { symbol: "META", name: "Meta Platforms Inc." },
-    { symbol: "SPY", name: "S&P 500 ETF (SPDR)" },
-    { symbol: "QQQ", name: "Nasdaq 100 ETF (Invesco)" },
-    { symbol: "JEPI", name: "JPMorgan Equity Premium Income ETF" },
-    { symbol: "JEPQ", name: "JPMorgan Nasdaq Equity Premium Income ETF" },
-    { symbol: "AMD", name: "Advanced Micro Devices Inc." },
-    { symbol: "INTC", name: "Intel Corporation" },
-    { symbol: "JPM", name: "JPMorgan Chase & Co." },
-    { symbol: "BAC", name: "Bank of America Corporation" },
-    { symbol: "DIS", name: "The Walt Disney Company" },
-    { symbol: "NFLX", name: "Netflix Inc." },
-    { symbol: "PLTR", name: "Palantir Technologies Inc." },
-    { symbol: "ARM", name: "Arm Holdings plc" },
-    { symbol: "SOFI", name: "SoFi Technologies Inc." },
-    { symbol: "MSTR", name: "MicroStrategy Inc." },
-    { symbol: "COIN", name: "Coinbase Global Inc." },
-    { symbol: "HOOD", name: "Robinhood Markets Inc." },
-    { symbol: "RIVN", name: "Rivian Automotive Inc." },
-    { symbol: "LCID", name: "Lucid Group Inc." },
-    { symbol: "F", name: "Ford Motor Company" },
-    { symbol: "GM", name: "General Motors Company" },
-    { symbol: "XOM", name: "Exxon Mobil Corporation" },
-    { symbol: "CVX", name: "Chevron Corporation" },
-    { symbol: "WMT", name: "Walmart Inc." },
-    { symbol: "COST", name: "Costco Wholesale Corporation" },
-    { symbol: "V", name: "Visa Inc." },
-    { symbol: "MA", name: "Mastercard Inc." },
-    { symbol: "UNH", name: "UnitedHealth Group Inc." },
-    { symbol: "PFE", name: "Pfizer Inc." },
-    { symbol: "VZ", name: "Verizon Communications Inc." },
-    { symbol: "T", name: "AT&T Inc." },
-  ],
-  options: [
-    { symbol: "SPY", name: "S&P 500 ETF — สภาพคล่องสูงที่สุด" },
-    { symbol: "QQQ", name: "Nasdaq 100 ETF — Covered Call / CSP นิยม" },
-    { symbol: "AAPL", name: "Apple Inc. — นิยมทำ Wheel Strategy" },
-    { symbol: "NVDA", name: "NVIDIA — IV สูง เหมาะ Sell Premium" },
-    { symbol: "TSLA", name: "Tesla — IV สูง ระวัง Gamma Risk" },
-    { symbol: "AMZN", name: "Amazon — CSP / Bull Put Spread" },
-    { symbol: "META", name: "Meta Platforms — Covered Call นิยม" },
-    { symbol: "MSFT", name: "Microsoft — Wheel Strategy เสถียร" },
-    { symbol: "AMD", name: "Advanced Micro Devices — IV Rank มักสูง" },
-    { symbol: "PLTR", name: "Palantir — CSP / Wheel สาย Tech" },
-    { symbol: "SOFI", name: "SoFi Technologies — ราคาต่ำ เหมาะ CSP" },
-    { symbol: "HOOD", name: "Robinhood Markets — Covered Call" },
-    { symbol: "XLE", name: "Energy Select Sector ETF — Covered Call" },
-    { symbol: "GLD", name: "SPDR Gold Shares — Options บน Gold" },
-    { symbol: "COIN", name: "Coinbase Global — IV สูงมาก" },
-  ],
-  futures: [
-    { symbol: "Gold", name: "Gold Futures (GC=F) — ทองคำ" },
-    { symbol: "Silver", name: "Silver Futures (SI=F) — เงิน" },
-    { symbol: "Crude Oil", name: "WTI Crude Oil Futures (CL=F) — น้ำมันดิบ" },
-    { symbol: "Natural Gas", name: "Natural Gas Futures (NG=F) — ก๊าซธรรมชาติ" },
-    { symbol: "Corn", name: "Corn Futures (ZC=F) — ข้าวโพด" },
-    { symbol: "Wheat", name: "Wheat Futures (ZW=F) — ข้าวสาลี" },
-    { symbol: "Soybean", name: "Soybean Futures (ZS=F) — ถั่วเหลือง" },
-    { symbol: "Copper", name: "Copper Futures (HG=F) — ทองแดง" },
-    { symbol: "Platinum", name: "Platinum Futures (PL=F) — แพลตตินัม" },
-    { symbol: "S&P 500", name: "S&P 500 E-mini Futures (ES=F)" },
-    { symbol: "Nasdaq", name: "Nasdaq 100 E-mini Futures (NQ=F)" },
-  ],
-  crypto: [
-    { symbol: "BTC", name: "Bitcoin (BTC-USD / Binance:BTCUSDT)" },
-    { symbol: "ETH", name: "Ethereum (ETH-USD / Binance:ETHUSDT)" },
-    { symbol: "BTC.BK", name: "Bitcoin ETF (ไทย — BTC.BK)" },
-    { symbol: "BNB", name: "BNB (Binance Coin)" },
-    { symbol: "SOL", name: "Solana" },
-    { symbol: "XRP", name: "XRP (Ripple)" },
-    { symbol: "ADA", name: "Cardano" },
-    { symbol: "AVAX", name: "Avalanche" },
-    { symbol: "DOGE", name: "Dogecoin" },
-    { symbol: "MATIC", name: "Polygon (POL)" },
-    { symbol: "LINK", name: "Chainlink" },
-    { symbol: "DOT", name: "Polkadot" },
-    { symbol: "ATOM", name: "Cosmos" },
-    { symbol: "SUI", name: "Sui Network" },
-    { symbol: "ARB", name: "Arbitrum" },
-    { symbol: "OP", name: "Optimism" },
-    { symbol: "PEPE", name: "Pepe (Meme Coin)" },
-    { symbol: "WIF", name: "dogwifhat (Meme Coin)" },
-  ],
-  forex: [
-    { symbol: "EUR/USD", name: "Euro / US Dollar — คู่หลักที่นิยมสุด" },
-    { symbol: "USD/JPY", name: "US Dollar / Japanese Yen" },
-    { symbol: "GBP/USD", name: "British Pound / US Dollar" },
-    { symbol: "AUD/USD", name: "Australian Dollar / US Dollar" },
-    { symbol: "USD/CAD", name: "US Dollar / Canadian Dollar" },
-    { symbol: "USD/CHF", name: "US Dollar / Swiss Franc" },
-    { symbol: "NZD/USD", name: "New Zealand Dollar / US Dollar" },
-    { symbol: "EUR/JPY", name: "Euro / Japanese Yen" },
-    { symbol: "GBP/JPY", name: "British Pound / Japanese Yen" },
-    { symbol: "EUR/GBP", name: "Euro / British Pound" },
-    { symbol: "USD/SGD", name: "US Dollar / Singapore Dollar" },
-    { symbol: "USD/THB", name: "US Dollar / Thai Baht" },
-  ],
+  equity: buildEquityDB(),
+  macro: [...FUTURES_SYMBOLS, ...FOREX_SYMBOLS],
+  crypto: CRYPTO_SYMBOLS,
 };
 
 // ===== Helper Functions =====
@@ -194,7 +212,22 @@ interface MarketSnapshot {
   pivot_points?: { pp: number; r1: number; r2: number; s1: number; s2: number } | null;
   volume_ratio?: number | null;
   pct_from_52w_high?: number; pct_from_52w_low?: number;
+  weekly_change_pct?: number | null;
+  weekly_sma10?: number | null;
+  weekly_above_sma10?: boolean | null;
   data_quality?: { isAbnormal: boolean; flags: string[] };
+}
+
+interface CotData {
+  market: string;
+  reportDate: string;
+  noncommLong: number;
+  noncommShort: number;
+  noncommNet: number;
+  commNet: number;
+  openInterest: number;
+  netChangeWeek: number;
+  percentile30w: number | null;
 }
 
 interface FundamentalData {
@@ -238,6 +271,7 @@ interface AnalysisResult {
   risk_note?: string;
   market_snapshot?: MarketSnapshot;
   fundamental?: FundamentalData;
+  cot?: CotData;
   crypto_market?: { btcDominance?: number; fearGreedIndex?: number; fearGreedLabel?: string; totalMarketCap?: number };
   data_source?: string;
   analyzed_at?: string;
@@ -361,6 +395,7 @@ function AppContent() {
   async function handleAnalyze() {
     if (!symbol.trim()) return;
     setShowSuggestions(false);
+    setTvOverride("");
     setLoading(true);
     setError(null);
     setResult(null);
@@ -446,6 +481,7 @@ function AppContent() {
   function restoreHistoryEntry(entry: HistoryEntry) {
     setActiveClass(entry.assetClass);
     setSymbol(entry.symbol);
+    setTvOverride("");
     setResult(entry.result);
     setError(null);
     setShowHistory(false);
@@ -500,7 +536,7 @@ function AppContent() {
             const active = c.key === activeClass;
             return (
               <button key={c.key} className="tab-btn"
-                onClick={() => { setActiveClass(c.key); setResult(null); setError(null); setSymbol(""); setShowSuggestions(false); }}
+                onClick={() => { setActiveClass(c.key); setResult(null); setError(null); setSymbol(""); setTvOverride(""); setShowSuggestions(false); }}
                 style={{
                   display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 6,
                   border: `1px solid ${active ? "#C9A45C" : "#2A323C"}`,
@@ -804,6 +840,21 @@ function AppContent() {
                     );
                   })}
                 </div>
+                {snap.weekly_change_pct != null && (
+                  <div style={{ borderTop: "1px solid #1E2530", paddingTop: 10, marginBottom: snap.pivot_points ? 10 : 0 }}>
+                    <div style={{ fontSize: 9, color: "#5C6470", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em", marginBottom: 4 }}>WEEKLY TREND (ภาพใหญ่)</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
+                      <span style={{ color: snap.weekly_change_pct >= 0 ? "#7FD4B3" : "#E8988F", fontWeight: 600 }}>
+                        {snap.weekly_change_pct >= 0 ? "▲" : "▼"} {snap.weekly_change_pct >= 0 ? "+" : ""}{snap.weekly_change_pct}% (สัปดาห์นี้)
+                      </span>
+                      {snap.weekly_sma10 != null && (
+                        <span style={{ color: snap.weekly_above_sma10 ? "#7FD4B3" : "#E8988F" }}>
+                          {snap.weekly_above_sma10 ? "เหนือ" : "ต่ำกว่า"} SMA 10W · {snap.weekly_sma10.toLocaleString("en-US")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {snap.pivot_points && (
                   <div style={{ borderTop: "1px solid #1E2530", paddingTop: 10 }}>
                     <div style={{ fontSize: 9, color: "#5C6470", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em", marginBottom: 6 }}>PIVOT POINTS (Classic)</div>
@@ -826,8 +877,50 @@ function AppContent() {
               </div>
             )}
 
+            {/* ── COT Report Panel (เฉพาะฟิวเจอร์ส/ฟอเร็กซ์) ── */}
+            {result.cot && (
+              <div style={{ background: "#0D1319", border: "1px solid #2A323C", borderRadius: 8, padding: "12px 16px", marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#5C6470", letterSpacing: "0.12em" }}>
+                    COT REPORT · CFTC (รายสัปดาห์)
+                  </div>
+                  <div style={{ fontSize: 10, color: "#5C6470", fontFamily: "'JetBrains Mono', monospace" }}>
+                    {result.cot.market} · รายงาน {result.cot.reportDate}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "8px 20px" }}>
+                  {[
+                    {
+                      label: "Net Non-Comm (เก็งกำไร)",
+                      value: `${result.cot.noncommNet >= 0 ? "+" : ""}${result.cot.noncommNet.toLocaleString("en-US")}`,
+                      note: `${result.cot.netChangeWeek >= 0 ? "+" : ""}${result.cot.netChangeWeek.toLocaleString("en-US")} สัปดาห์ก่อน`,
+                      color: result.cot.noncommNet >= 0 ? "#7FD4B3" : "#E8988F",
+                    },
+                    {
+                      label: "Percentile 30W",
+                      value: result.cot.percentile30w != null ? `${result.cot.percentile30w}%` : "N/A",
+                      note: result.cot.percentile30w != null ? (result.cot.percentile30w >= 80 ? "EXTREME LONG" : result.cot.percentile30w <= 20 ? "EXTREME SHORT" : "") : "",
+                      color: result.cot.percentile30w != null ? (result.cot.percentile30w >= 80 ? "#C9A45C" : result.cot.percentile30w <= 20 ? "#C9A45C" : "#B8BFC9") : "#B8BFC9",
+                    },
+                    { label: "Non-Comm Long", value: result.cot.noncommLong.toLocaleString("en-US"), note: "", color: "#B8BFC9" },
+                    { label: "Non-Comm Short", value: result.cot.noncommShort.toLocaleString("en-US"), note: "", color: "#B8BFC9" },
+                    { label: "Net Comm (hedger)", value: `${result.cot.commNet >= 0 ? "+" : ""}${result.cot.commNet.toLocaleString("en-US")}`, note: "", color: "#B8BFC9" },
+                    { label: "Open Interest", value: result.cot.openInterest.toLocaleString("en-US"), note: "", color: "#B8BFC9" },
+                  ].map(item => (
+                    <div key={item.label}>
+                      <div style={{ fontSize: 9, color: "#5C6470", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em" }}>{item.label}</div>
+                      <div style={{ fontSize: 13, fontFamily: "'JetBrains Mono', monospace", color: item.color, marginTop: 2 }}>
+                        {item.value}
+                        {item.note && <span style={{ fontSize: 9, marginLeft: 5, color: "#8B93A0" }}>{item.note}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* ── Fundamental Data Panel ── */}
-            {result.fundamental && (activeClass === "stock" || activeClass === "options") && (
+            {result.fundamental && activeClass === "equity" && (
               <div style={{ background: "#0D1319", border: "1px solid #2A323C", borderRadius: 8, marginBottom: 20, overflow: "hidden" }}>
                 <button onClick={() => setShowFundamental(!showFundamental)}
                   style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", color: "#E8E3D8" }}>
