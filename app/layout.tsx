@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "บันทึกวิเคราะห์แบบปู่ Larry Williams — Framework Analyzer",
-  description: "ระบบวิเคราะห์การลงทุนตามกรอบแนวคิด Larry Williams (หุ้น, ออปชั่น, ฟิวเจอร์ส, คริปโต, ฟอเร็กซ์)",
+  title: "Larry Williams Analyzer — Investment Framework Tool",
+  description: "Analyze stocks, options, futures, crypto, and forex using the Larry Williams investment framework. Real-time data powered by Yahoo Finance.",
 };
 
 export default function RootLayout({

@@ -37,3 +37,20 @@ input:focus {
   outline: none;
   border-color: #C9A45C !important;
 }
+
+.conf-bar-fill {
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.price-ticker {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
