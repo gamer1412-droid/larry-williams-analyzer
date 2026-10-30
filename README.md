@@ -14,10 +14,12 @@
 - `app/page.tsx` — UI ทั้งหมด (client component): ค้นหาสัญลักษณ์แบบ autocomplete, ชาร์ต TradingView, แสดงผลวิเคราะห์, ประวัติการวิเคราะห์ (localStorage)
 - `app/api/analyze/route.ts` — API หลังบ้าน:
   1. แปลงสัญลักษณ์เป็น Yahoo symbol (`toYahooSymbol`)
-  2. ดึงราคาจริง + คำนวณ SMA5/10/20, RSI14, ATR10, Pivot Points, Volume Ratio (cache ในหน่วยความจำ 5 นาที)
-  3. ตรวจคุณภาพข้อมูล (`assessDataQuality`) — ธงเตือนเมื่อราคาขยับผิดปกติ/ข้อมูลไม่สอดคล้อง
-  4. สร้าง prompt + เรียก AI แบบมี fallback หลาย provider (Groq → Gemini → OpenAI)
-  5. Self-check คำตอบ AI กับตัวเลขจริง แล้วคืน JSON
+  2. ดึงราคาจริง 1 ปี + คำนวณ SMA5/10/20, RSI14, ATR10, Pivot Points, Volume Ratio, **เทรนด์รายสัปดาห์** (cache ในหน่วยความจำ 5 นาที)
+  3. ดึงข้อมูลประกอบ: Fundamental (หุ้น — Yahoo v7 quote + crumb), Crypto โดยรวม (CoinGecko + Fear & Greed), **COT Report จริงจาก CFTC** (ฟิวเจอร์ส/ฟอเร็กซ์, cache 24 ชม.)
+  4. ตรวจคุณภาพข้อมูล (`assessDataQuality`) — ธงเตือนเมื่อราคาขยับผิดปกติ/ข้อมูลไม่สอดคล้อง
+  5. สร้าง prompt + เรียก AI แบบมี fallback **เฉพาะโมเดลฟรี** (Groq → Gemini)
+  6. Self-check คำตอบ AI กับตัวเลขจริง + ตรวจ Action Plan (รูปทรง Entry/SL/TP, คำนวณ Risk:Reward) แล้วคืน JSON
+- `lib/analysis.ts` — logic คำนวณ pure ทั้งหมด (symbol mapping, indicators, data quality, COT mapping, action plan validation) — **unit test ด้วย Vitest**: `npm test`
 
 ## การติดตั้ง
 
@@ -29,7 +31,7 @@ npm run dev                  # http://localhost:3000
 
 ## API Keys
 
-ระบบลองตามลำดับ Groq (แนะนำ ฟรี+เร็ว) → Gemini → OpenAI — ดูรายละเอียดใน `.env.example`
+ใช้เฉพาะโมเดลฟรี — ระบบลองตามลำดับ Groq (แนะนำ ฟรี+เร็ว) → Gemini (free tier, gemini-2.5-flash) — ดูรายละเอียดใน `.env.example`
 
 ## Deploy (Vercel)
 

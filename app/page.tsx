@@ -261,6 +261,12 @@ interface ActionPlan {
   rationale?: string;
 }
 
+interface ActionPlanValidation {
+  parsed: { entry?: number; entryLow?: number; entryHigh?: number; stop?: number; tp1?: number; tp2?: number };
+  rr: number | null;
+  warnings: string[];
+}
+
 interface AnalysisResult {
   symbol: string;
   overall_bias: "bullish" | "bearish" | "neutral";
@@ -268,6 +274,7 @@ interface AnalysisResult {
   summary: string;
   criteria: CriterionItem[];
   action_plan?: ActionPlan;
+  action_plan_validation?: ActionPlanValidation;
   risk_note?: string;
   market_snapshot?: MarketSnapshot;
   fundamental?: FundamentalData;
@@ -695,6 +702,21 @@ function AppContent() {
         {/* Results */}
         {result && !loading && (
           <div className="fade-in">
+            {/* ⚠️ เตือนเด่น — การวิเคราะห์นี้ไม่มีข้อมูลราคาจริงรองรับ */}
+            {!snap && (
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#2A2A22", border: "1px solid #9B8F5A", borderRadius: 8, padding: "14px 16px", marginBottom: 20 }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2, color: "#D4C88F" }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#D4C88F", marginBottom: 4 }}>
+                    การวิเคราะห์นี้ไม่ได้อิงราคาจริง
+                  </div>
+                  <div style={{ fontSize: 12, color: "#B8AE7C", lineHeight: 1.7 }}>
+                    ดึงข้อมูลราคาจาก Yahoo Finance ไม่สำเร็จ (สัญลักษณ์อาจผิด หรือแหล่งข้อมูลขัดข้องชั่วคราว) — ผลลัพธ์เป็นเพียงกรอบแนวคิดจาก AI โดยไม่มีตัวเลขจริงรองรับ ควรตรวจสอบสัญลักษณ์หรือลองใหม่ก่อนใช้ตัดสินใจ
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Market Snapshot */}
             {snap && (
               <div style={{ background: "#141A22", border: "1px solid #2A323C", borderRadius: 10, padding: "16px 20px", marginBottom: 20 }}>
@@ -956,6 +978,7 @@ function AppContent() {
             {/* ── Action Plan ── */}
             {result.action_plan && (() => {
               const ap = result.action_plan;
+              const apv = result.action_plan_validation;
               const recColors: Record<string, { bg: string; border: string; text: string }> = {
                 BUY:  { bg: "#1A3A2C", border: "#4A9B7F", text: "#7FD4B3" },
                 SELL: { bg: "#3A1F1F", border: "#C1554B", text: "#E8988F" },
@@ -963,17 +986,30 @@ function AppContent() {
                 WAIT: { bg: "#1E2530", border: "#5C7A9B", text: "#8BB8D4" },
               };
               const rc = recColors[ap.recommendation?.toUpperCase()] || recColors.HOLD;
+              const rr = apv?.rr ?? null;
+              const rrColor = rr == null ? "#5C6470" : rr >= 2 ? "#4A9B7F" : rr >= 1 ? "#C9A45C" : "#C1554B";
               return (
                 <div style={{ background: "#141A22", border: `1px solid ${rc.border}`, borderRadius: 10, padding: "16px 20px", marginBottom: 20 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#5C6470", letterSpacing: "0.12em" }}>ACTION PLAN</div>
-                    <div style={{
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700,
-                      padding: "5px 18px", borderRadius: 6,
-                      background: rc.bg, color: rc.text, border: `1px solid ${rc.border}`,
-                      letterSpacing: "0.12em",
-                    }}>
-                      {ap.recommendation}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      {rr != null && (
+                        <div style={{
+                          fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 700,
+                          padding: "4px 12px", borderRadius: 6, color: rrColor,
+                          border: `1px solid ${rrColor}`, background: "transparent",
+                        }} title="Risk:Reward = (TP1 − Entry) / (Entry − Stop Loss)">
+                          R:R 1:{rr}
+                        </div>
+                      )}
+                      <div style={{
+                        fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700,
+                        padding: "5px 18px", borderRadius: 6,
+                        background: rc.bg, color: rc.text, border: `1px solid ${rc.border}`,
+                        letterSpacing: "0.12em",
+                      }}>
+                        {ap.recommendation}
+                      </div>
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "10px 20px", marginBottom: 12 }}>
@@ -994,6 +1030,14 @@ function AppContent() {
                   {ap.rationale && (
                     <div style={{ fontSize: 12, color: "#8B93A0", lineHeight: 1.6, borderTop: "1px solid #1E2530", paddingTop: 10 }}>
                       {ap.rationale}
+                    </div>
+                  )}
+                  {apv && apv.warnings.length > 0 && (
+                    <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "flex-start", background: "#3A1F1F", border: "1px solid #C1554B", borderRadius: 6, padding: "8px 12px" }}>
+                      <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 2, color: "#E8988F" }} />
+                      <div style={{ fontSize: 12, color: "#E8988F", lineHeight: 1.6 }}>
+                        {apv.warnings.map((w, i) => <div key={i}>• {w}</div>)}
+                      </div>
                     </div>
                   )}
                 </div>
